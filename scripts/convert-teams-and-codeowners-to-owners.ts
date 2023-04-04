@@ -1,5 +1,5 @@
 import { Octokit } from "https://cdn.skypack.dev/octokit?dts";
-import { join } from "https://deno.land/std/path/mod.ts";
+import { basename, dirname, join } from "https://deno.land/std/path/mod.ts";
 
 interface CodeownersEntry {
   pattern: string;
@@ -65,27 +65,54 @@ function generateProwOwnersFiles(
 ): void {
   const extensionRegex = /\.\w+$/;
 
-  const directories = codeownersEntries
-    .filter((entry) =>
-      !extensionRegex.test(entry.pattern) || entry.owners.length === 0
-    )
-    .map(({ pattern }) => pattern);
+  codeownersEntries
+    .filter((e) => !extensionRegex.test(e.pattern))
+    .forEach((e) => {
+      const approverLines = codeownersEntries
+        .filter((entry) =>
+          entry.pattern.startsWith(`${e.pattern}/`) ||
+          entry.pattern === e.pattern
+        )
+        .flatMap((entry) => entry.owners)
+        .filter((owner, index, array) => array.indexOf(owner) === index) // remove duplicates
+        .map((owner) => `  - ${owner}`)
+        .join("\n");
 
-  directories.forEach((dir) => {
-    const approverLines = codeownersEntries
-      .filter((entry) =>
-        entry.pattern.startsWith(`${dir}/`) || entry.pattern === dir
-      )
-      .flatMap((entry) => entry.owners)
-      .filter((owner, index, array) => array.indexOf(owner) === index) // remove duplicates
-      .map((owner) => `  - ${owner}`)
-      .join("\n");
+      const ownersFilePath = join(basePath, e.pattern, "OWNERS");
+      const ownersContent =
+        `reviewers:\n${approverLines}\napprovers:\n${approverLines}\n`;
+      Deno.writeTextFileSync(ownersFilePath, ownersContent);
+    });
 
-    const ownersFilePath = join(basePath, dir, "OWNERS");
-    const ownersContent =
-      `reviewers:\n${approverLines}\napprovers:\n${approverLines}\n`;
-    Deno.writeTextFileSync(ownersFilePath, ownersContent);
-  });
+  codeownersEntries
+    .filter((e) => extensionRegex.test(e.pattern))
+    .forEach((e) => {
+      const approverLines = codeownersEntries
+        .filter((entry) =>
+          entry.pattern.startsWith(`${e.pattern}/`) ||
+          entry.pattern === e.pattern
+        )
+        .flatMap((entry) => entry.owners)
+        .filter((owner, index, array) => array.indexOf(owner) === index) // remove duplicates
+        .map((owner) => `      - ${owner}`)
+        .join("\n");
+
+      const ownersFilePath = join(basePath, dirname(e.pattern), "OWNERS");
+      const ownersContent = [
+        `# ${e.pattern} => ${e.owners}`,
+        `# See the OWNERS docs at https://go.k8s.io/owners`,
+        `filters:`,
+        `  ${basename(e.pattern).replaceAll(".", `\\.`)}$:`,
+        `    options:`,
+        `      no_parent_owners: true`,
+        `    reviewers:`,
+        approverLines,
+        `    approvers:`,
+        approverLines,
+        "\n",
+      ].join("\n");
+      Deno.writeTextFileSync(ownersFilePath, ownersContent, { append: true });
+    });
 }
 
 async function main(pathOfCodeOwners: string, token: string) {
